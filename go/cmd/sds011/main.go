@@ -61,9 +61,13 @@ func main() {
 		var pm10, pm25 float64
 		var ts string
 		var t1 time.Time
+		var awake bool
+
+		if awake, err = sensor.IsAwake(); !awake {
+			sensor.Awake()
+		}
 
 		t1 = time.Now()
-		sensor.Awake()
 		for i:=0; i < *samples; i++ {
 			point, err := sensor.Get()
 			if err != nil {
@@ -83,6 +87,7 @@ func main() {
 		if (interval > 1 * time.Second) {
 			sensor.Sleep()
 			time.Sleep(time.Until(t1.Add(interval)))
+			sensor.Awake()
 		}
 	}
 }
