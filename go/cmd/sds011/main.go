@@ -27,8 +27,12 @@ import (
 	"github.com/ryszard/sds011/go/sds011"
 )
 
+var interval time.Duration
+
 var (
+	interval = flag.Duration("interval", 0, "measurement interval (e.g. 30s, 15m, 1h20m)")
 	portPath = flag.String("port_path", "/dev/ttyUSB0", "serial port path")
+	samples = flag.Int("samples", 1, "number of samples per measurement")
 	unix = flag.Bool("unix", false, "print timestamps as number of seconds since 1970-01-01 00:00:00 UTC")
 )
 
@@ -41,11 +45,10 @@ The columns are: an RFC3339 timestamp, the PM2.5 level, the PM10 level.`)
 		fmt.Fprintf(os.Stderr, "\n\nUsage of %s:\n", os.Args[0])
 		flag.PrintDefaults()
 	}
+
 }
 
 func main() {
-	var ts string
-
 	flag.Parse()
 
 	sensor, err := sds011.New(*portPath)
@@ -55,18 +58,31 @@ func main() {
 	defer sensor.Close()
 
 	for {
-		point, err := sensor.Get()
-		if err != nil {
-			log.Printf("ERROR: sensor.Get: %v", err)
-			continue
-		}
+		var pm10, pm25 float64
+		var ts string
+		var t1 time.Time
 
-		if *unix {
-			ts = fmt.Sprintf("%v", point.Timestamp.Unix())
-		} else {
-			ts = point.Timestamp.Format(time.RFC3339)
+		t1 = time.Now()
+		sensor.Awake()
+		for i:=0; i < *samples; i++ {
+			point, err := sensor.Get()
+			if err != nil {
+				log.Printf("ERROR: sensor.Get: %v", err)
+				continue
+			}
+			pm10 += point.PM10
+			pm25 += point.PM25
+			if *unix {
+				ts = fmt.Sprintf("%v", point.Timestamp.Unix())
+			} else {
+				ts = point.Timestamp.Format(time.RFC3339)
+			}
 		}
+		fmt.Fprintf(os.Stdout, "%s,%.2f,%.2f\n", ts, pm25 / float64(*samples), pm10 / float64(*samples))
 
-		fmt.Fprintf(os.Stdout, "%v,%v,%v\n", ts, point.PM25, point.PM10)
+		if (interval > 1 * time.Second) {
+			sensor.Sleep()
+			time.Sleep(time.Until(t1.Add(interval)))
+		}
 	}
 }
