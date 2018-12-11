@@ -21,10 +21,13 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
 	"github.com/ryszard/sds011/go/sds011"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var interval time.Duration
@@ -34,6 +37,22 @@ var (
 	portPath = flag.String("port_path", "/dev/ttyUSB0", "serial port path")
 	samples = flag.Int("samples", 1, "number of samples per measurement")
 	unix = flag.Bool("unix", false, "print timestamps as number of seconds since 1970-01-01 00:00:00 UTC")
+	addr = flag.String("listen-address", "", "The address to listen on for HTTP requests.")
+)
+
+var (
+	pm25mt = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "pm25",
+			Help: "Data from PM2.5 sensor",
+		},
+	)
+	pm10mt = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "pm10",
+			Help: "Data from PM10 sensor",
+		},
+	)
 )
 
 func init() {
@@ -46,10 +65,22 @@ The columns are: an RFC3339 timestamp, the PM2.5 level, the PM10 level.`)
 		flag.PrintDefaults()
 	}
 
+	prometheus.MustRegister(pm25mt)
+	prometheus.MustRegister(pm10mt)
+}
+
+func listen_http() {
+	// Expose the registered metrics via HTTP.
+	http.Handle("/metrics", promhttp.Handler())
+	log.Fatal(http.ListenAndServe(*addr, nil))
 }
 
 func main() {
 	flag.Parse()
+
+	if (len(*addr) > 0) {
+		go listen_http()
+	}
 
 	sensor, err := sds011.New(*portPath)
 	if err != nil {
@@ -82,7 +113,12 @@ func main() {
 				ts = point.Timestamp.Format(time.RFC3339)
 			}
 		}
-		fmt.Fprintf(os.Stdout, "%s,%.2f,%.2f\n", ts, pm25 / float64(*samples), pm10 / float64(*samples))
+
+		pm25 = pm25 / float64(*samples)
+		pm10 = pm10 / float64(*samples)
+		fmt.Fprintf(os.Stdout, "%s,%.2f,%.2f\n", ts, pm25, pm10)
+		pm10mt.Set(pm10)
+		pm25mt.Set(pm25)
 
 		if (interval > 1 * time.Second) {
 			sensor.Sleep()
